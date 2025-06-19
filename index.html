@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Playlist Generator for Spotify</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+        @-webkit-keyframes spin {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold mb-2">AI Playlist Generator</h1>
+            <p class="text-gray-400">Create Spotify playlists from any prompt.</p>
+        </header>
+
+        <div id="login-section" class="text-center mb-8">
+            <button id="login-button" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full transition duration-300">Login with Spotify</button>
+        </div>
+
+        <main id="app-section" class="hidden">
+            <div class="max-w-2xl mx-auto">
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+                    <label for="prompt" class="block text-lg font-medium mb-2">Enter your playlist prompt:</label>
+                    <textarea id="prompt" class="w-full bg-gray-700 text-white p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500" rows="3" placeholder="e.g., covers by other artists of charlie parker songs"></textarea>
+                    <button id="generate-button" class="mt-4 w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full transition duration-300">Generate Playlist</button>
+                </div>
+                
+                <div id="loading" class="hidden text-center my-8">
+                    <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32 mx-auto"></div>
+                    <p class="mt-4">Generating your playlist...</p>
+                </div>
+
+                <div id="playlist-section" class="hidden">
+                    <h2 class="text-2xl font-bold mb-4">Generated Playlist</h2>
+                    <div id="spotify-embed" class="mb-4"></div>
+                    <button id="save-button" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full transition duration-300">Save Playlist to Spotify</button>
+                </div>
+            </div>
+        </main>
+
+    </div>
+
+    <script>
+        // IMPORTANT: Replace with your own Spotify Client ID and Gemini API Key
+        const clientId = "5c618d0486b747529dba6975f667ac87"; // Replace with your Spotify Client ID
+        const geminiApiKey = ""; // This app uses a proxy for Gemini, so no key is needed here.
+
+        const redirectUri = window.location.origin + window.location.pathname;
+
+        const loginButton = document.getElementById('login-button');
+        const generateButton = document.getElementById('generate-button');
+        const saveButton = document.getElementById('save-button');
+
+        const loginSection = document.getElementById('login-section');
+        const appSection = document.getElementById('app-section');
+        const loadingDiv = document.getElementById('loading');
+        const playlistSection = document.getElementById('playlist-section');
+        const spotifyEmbedDiv = document.getElementById('spotify-embed');
+
+        window.onload = () => {
+            handleRedirect();
+        };
+
+        loginButton.addEventListener('click', () => {
+            redirectToSpotifyLogin();
+        });
+
+        generateButton.addEventListener('click', async () => {
+            const prompt = document.getElementById('prompt').value;
+            if (!prompt) {
+                alert('Please enter a prompt!');
+                return;
+            }
+            await generatePlaylist(prompt);
+        });
+
+        saveButton.addEventListener('click', async () => {
+            const playlistId = saveButton.dataset.playlistId;
+            if (playlistId) {
+                alert('Playlist already saved!');
+            } else {
+                 alert('Generate a playlist first!');
+            }
+        });
+
+        function generateCodeVerifier(length) {
+            let text = '';
+            let possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            for (let i = 0; i < length; i++) {
+                text += possible.charAt(Math.floor(Math.random() * possible.length));
+            }
+            return text;
+        }
+
+        async function generateCodeChallenge(codeVerifier) {
+            const data = new TextEncoder().encode(codeVerifier);
+            const digest = await window.crypto.subtle.digest('SHA-256', data);
+            return btoa(String.fromCharCode.apply(null, [...new Uint8Array(digest)]))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+        }
+
+        async function redirectToSpotifyLogin() {
+            const verifier = generateCodeVerifier(128);
+            localStorage.setItem("verifier", verifier);
+            const challenge = await generateCodeChallenge(verifier);
+
+            const params = new URLSearchParams();
+            params.append("client_id", clientId);
+            params.append("response_type", "code");
+            params.append("redirect_uri", redirectUri);
+            params.append("scope", "playlist-modify-public streaming user-read-email user-read-private");
+            params.append("code_challenge_method", "S256");
+            params.append("code_challenge", challenge);
+
+            document.location = `https://accounts.spotify.com/authorize?${params.toString()}`;
+        }
+
+        async function handleRedirect() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+
+            if (code) {
+                await getAccessToken(code);
+                window.history.pushState({}, '', redirectUri); // Clean URL
+                loginSection.classList.add('hidden');
+                appSection.classList.remove('hidden');
+            } else if (localStorage.getItem('access_token')) {
+                 loginSection.classList.add('hidden');
+                 appSection.classList.remove('hidden');
+            }
+        }
+
+        async function getAccessToken(code) {
+            const verifier = localStorage.getItem("verifier");
+            const params = new URLSearchParams();
+            params.append("client_id", clientId);
+            params.append("grant_type", "authorization_code");
+            params.append("code", code);
+            params.append("redirect_uri", redirectUri);
+            params.append("code_verifier", verifier);
+
+            const result = await fetch("https://accounts.spotify.com/api/token", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: params
+            });
+
+            const { access_token, refresh_token } = await result.json();
+            localStorage.setItem('access_token', access_token);
+            localStorage.setItem('refresh_token', refresh_token);
+        }
+
+        async function generatePlaylist(prompt) {
+            loadingDiv.classList.remove('hidden');
+            playlistSection.classList.add('hidden');
+
+            try {
+                const songList = await getSongListFromLLM(prompt);
+                if (!songList || songList.length === 0) {
+                    throw new Error("Could not generate a song list from the prompt.");
+                }
+                const trackUris = await searchSpotifyForTracks(songList);
+                if (!trackUris || trackUris.length === 0) {
+                    throw new Error("Could not find any tracks on Spotify for the generated list.");
+                }
+                
+                const user = await getSpotifyUserProfile();
+                const playlist = await createSpotifyPlaylist(user.id, prompt);
+                await addTracksToSpotifyPlaylist(playlist.id, trackUris);
+                
+                embedSpotifyPlaylist(playlist.id);
+                saveButton.dataset.playlistId = playlist.id;
+
+            } catch (error) {
+                console.error("Error generating playlist:", error);
+                alert(`Failed to generate playlist: ${error.message}`);
+            } finally {
+                loadingDiv.classList.add('hidden');
+            }
+        }
+
+        async function getSongListFromLLM(prompt) {
+            // In a real application, you would call the Gemini API here.
+            // For this example, we'll use a mocked response.
+            // This is where you would integrate the Gemini API call.
+            console.log(`Sending prompt to LLM: ${prompt}`);
+             let chatHistory = [];
+             chatHistory.push({ role: "user", parts: [{ text: `Generate a list of 15 songs for a playlist with the theme: "${prompt}". Please provide the response as a JSON array of objects, where each object has a "song" and "artist" property. For example: [{"song": "Song Title", "artist": "Artist Name"}].` }] });
+             const payload = { 
+                 contents: chatHistory,
+                 generationConfig: {
+                    responseMimeType: "application/json",
+                 }
+             };
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Gemini API request failed with status ${response.status}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.candidates && result.candidates.length > 0 &&
+              result.candidates[0].content && result.candidates[0].content.parts &&
+              result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                return JSON.parse(text);
+            } else {
+                throw new Error("Invalid response from Gemini API");
+            }
+
+        }
+        
+        async function searchSpotifyForTracks(songList) {
+            const accessToken = localStorage.getItem('access_token');
+            const trackUris = [];
+
+            for (const song of songList) {
+                const query = `track:${song.song} artist:${song.artist}`;
+                const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=1`, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`
+                    }
+                });
+                const data = await response.json();
+                if (data.tracks.items.length > 0) {
+                    trackUris.push(data.tracks.items[0].uri);
+                }
+            }
+            return trackUris;
+        }
+
+        async function getSpotifyUserProfile() {
+            const accessToken = localStorage.getItem('access_token');
+            const response = await fetch('https://api.spotify.com/v1/me', {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`
+                }
+            });
+            return await response.json();
+        }
+
+        async function createSpotifyPlaylist(userId, name) {
+            const accessToken = localStorage.getItem('access_token');
+            const response = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: `AI Playlist: ${name}`,
+                    public: true,
+                    description: `Generated by AI based on the prompt: "${name}"`
+                })
+            });
+            return await response.json();
+        }
+
+        async function addTracksToSpotifyPlaylist(playlistId, trackUris) {
+            const accessToken = localStorage.getItem('access_token');
+            await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    uris: trackUris
+                })
+            });
+        }
+        
+        function embedSpotifyPlaylist(playlistId) {
+            spotifyEmbedDiv.innerHTML = `
+                <iframe src="https://open.spotify.com/embed/playlist/${playlistId}" 
+                        width="100%" 
+                        height="380" 
+                        frameBorder="0" 
+                        allowtransparency="true" 
+                        allow="encrypted-media">
+                </iframe>`;
+            playlistSection.classList.remove('hidden');
+        }
+
+    </script>
+</body>
+</html>
