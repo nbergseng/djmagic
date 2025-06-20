@@ -41,7 +41,11 @@
             outline: none;
             box-shadow: 0 0 5px #f0f, 0 0 10px #f0f;
         }
-
+        .history-item {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         .loader {
             border-top-color: #f0f;
             -webkit-animation: spin 1s linear infinite;
@@ -70,7 +74,7 @@
         </div>
 
         <main id="app-section" class="hidden">
-            <div class="max-w-2xl mx-auto">
+            <div class="max-w-4xl mx-auto">
                  <div id="key-section" class="bg-gray-800/50 backdrop-blur-sm p-6 rounded-lg shadow-lg mb-8 glowing-border">
                     <label for="api-key-input" class="block text-lg font-medium mb-2">Enter your Gemini API Key</label>
                     <p class="text-sm text-gray-400 mb-2">Your key is stored only in your browser for this session. <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-green-400 hover:text-green-300 hover:underline">Get your key from Google AI Studio.</a></p>
@@ -80,21 +84,30 @@
                     </div>
                  </div>
 
-                <div id="generator-section" class="hidden">
-                    <div class="bg-gray-800/50 backdrop-blur-sm p-6 rounded-lg shadow-lg mb-8 glowing-border">
-                        <label for="prompt" class="block text-lg font-medium mb-2">Cast your musical spell:</label>
-                        <textarea id="prompt" class="w-full bg-gray-700 text-white p-3 rounded-md focus-glow" rows="3" placeholder="e.g., covers by other artists of charlie parker songs"></textarea>
-                        <button id="generate-button" class="mt-4 w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Summon Playlist</button>
-                    </div>
-                
-                    <div id="loading" class="hidden text-center my-8">
-                        <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32 mx-auto"></div>
-                        <p class="mt-4 text-lg">Conjuring your mix...</p>
-                    </div>
+                <div id="generator-section" class="hidden md:grid md:grid-cols-3 md:gap-8">
+                    <div class="md:col-span-2">
+                        <div id="prompt-container" class="bg-gray-800/50 backdrop-blur-sm p-6 rounded-lg shadow-lg mb-8 glowing-border">
+                            <label for="prompt" class="block text-lg font-medium mb-2">Cast your musical spell:</label>
+                            <textarea id="prompt" class="w-full bg-gray-700 text-white p-3 rounded-md focus-glow" rows="3" placeholder="e.g., covers by other artists of charlie parker songs"></textarea>
+                            <button id="generate-button" class="mt-4 w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Summon Playlist</button>
+                        </div>
+                    
+                        <div id="loading" class="hidden text-center my-8">
+                            <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32 mx-auto"></div>
+                            <p class="mt-4 text-lg">Conjuring your mix...</p>
+                        </div>
 
-                    <div id="playlist-section" class="hidden">
-                        <h2 class="text-3xl font-bold mb-4 text-center">Your Spell was Cast!</h2>
-                        <div id="spotify-embed" class="mb-4 rounded-lg overflow-hidden"></div>
+                        <div id="playlist-section" class="hidden">
+                            <h2 class="text-3xl font-bold mb-4 text-center">Your Spell was Cast!</h2>
+                            <div id="spotify-embed" class="mb-4 rounded-lg overflow-hidden"></div>
+                             <button id="new-magik-button" class="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Cast a New Spell</button>
+                        </div>
+                    </div>
+                    <div id="history-sidebar" class="md:col-span-1 bg-gray-800/50 backdrop-blur-sm p-4 rounded-lg shadow-lg glowing-border h-96 overflow-y-auto">
+                        <h3 class="text-xl font-bold mb-4 border-b border-purple-500 pb-2">Spell History</h3>
+                        <ul id="history-list" class="space-y-2">
+                            <!-- History items will be injected here -->
+                        </ul>
                     </div>
                 </div>
             </div>
@@ -104,6 +117,7 @@
     <script>
         const clientId = "5c618d0486b747529dba6975f667ac87"; // Your Spotify Client ID
         let geminiApiKey = ""; // This will be provided by the user
+        let playlistHistory = [];
 
         const redirectUri = window.location.origin + window.location.pathname;
 
@@ -112,7 +126,9 @@
         const saveKeyButton = document.getElementById('save-key-button');
         const apiKeyInput = document.getElementById('api-key-input');
         const generateButton = document.getElementById('generate-button');
-
+        const newMagikButton = document.getElementById('new-magik-button');
+        
+        const promptContainer = document.getElementById('prompt-container');
         const loginSection = document.getElementById('login-section');
         const appSection = document.getElementById('app-section');
         const keySection = document.getElementById('key-section');
@@ -120,10 +136,12 @@
         const loadingDiv = document.getElementById('loading');
         const playlistSection = document.getElementById('playlist-section');
         const spotifyEmbedDiv = document.getElementById('spotify-embed');
+        const historyList = document.getElementById('history-list');
 
         window.onload = () => {
             handleRedirect();
             checkForKey();
+            loadHistory();
         };
         
         function checkForKey() {
@@ -164,6 +182,43 @@
             }
             await generatePlaylist(prompt);
         });
+        
+        newMagikButton.addEventListener('click', () => {
+            playlistSection.classList.add('hidden');
+            promptContainer.classList.remove('hidden');
+            document.getElementById('prompt').value = '';
+        });
+        
+        function loadHistory() {
+            const savedHistory = localStorage.getItem('djMagikHistory');
+            if (savedHistory) {
+                playlistHistory = JSON.parse(savedHistory);
+                renderHistory();
+            }
+        }
+
+        function saveHistory() {
+            localStorage.setItem('djMagikHistory', JSON.stringify(playlistHistory));
+        }
+
+        function renderHistory() {
+            historyList.innerHTML = '';
+            if (playlistHistory.length === 0) {
+                 historyList.innerHTML = `<li class="text-gray-500 italic">No spells cast yet.</li>`;
+            }
+            playlistHistory.slice().reverse().forEach(item => {
+                const li = document.createElement('li');
+                li.innerHTML = `<a href="#" class="history-item block p-2 rounded-md hover:bg-purple-700/50 transition-colors" data-playlist-id="${item.playlistId}">${item.prompt}</a>`;
+                li.querySelector('a').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    promptContainer.classList.add('hidden');
+                    loadingDiv.classList.add('hidden');
+                    embedSpotifyPlaylist(item.playlistId);
+                });
+                historyList.appendChild(li);
+            });
+        }
+
 
         function generateCodeVerifier(length) {
             let text = '';
@@ -233,8 +288,7 @@
             localStorage.setItem('access_token', access_token);
             localStorage.setItem('refresh_token', refresh_token);
         }
-
-        // New function to handle token refresh
+        
         async function refreshToken() {
             const refreshToken = localStorage.getItem('refresh_token');
             if (!refreshToken) {
@@ -264,15 +318,13 @@
 
             const { access_token, refresh_token: new_refresh_token } = await result.json();
             localStorage.setItem('access_token', access_token);
-            // Spotify might send a new refresh token, so we should update it if it exists
             if (new_refresh_token) {
                 localStorage.setItem('refresh_token', new_refresh_token);
             }
             console.log("Token refreshed successfully.");
             return access_token;
         }
-
-        // New helper function for all Spotify API calls
+        
         async function spotifyApiFetch(url, options = {}) {
             let accessToken = localStorage.getItem('access_token');
             
@@ -300,8 +352,7 @@
                 throw new Error(errorMessage);
             }
             
-            // Handle 204 No Content response
-             if (response.status === 204) {
+             if (response.status === 204 || response.headers.get('content-length') === '0') {
                 return null;
             }
 
@@ -309,6 +360,7 @@
         }
 
         async function generatePlaylist(prompt) {
+            promptContainer.classList.add('hidden');
             loadingDiv.classList.remove('hidden');
             playlistSection.classList.add('hidden');
 
@@ -326,11 +378,16 @@
                 const playlist = await createSpotifyPlaylist(user.id, prompt);
                 await addTracksToSpotifyPlaylist(playlist.id, trackUris);
                 
+                playlistHistory.push({ prompt: prompt, playlistId: playlist.id });
+                saveHistory();
+                renderHistory();
+                
                 embedSpotifyPlaylist(playlist.id);
 
             } catch (error) {
                 console.error("Error generating playlist:", error);
                 alert(`Failed to generate playlist: ${error.message}`);
+                promptContainer.classList.remove('hidden');
             } finally {
                 loadingDiv.classList.add('hidden');
             }
@@ -385,7 +442,7 @@
                 if(song.song && song.artist) {
                     const query = `track:${song.song} artist:${song.artist}`;
                     const data = await spotifyApiFetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=1`);
-                    if (data.tracks && data.tracks.items.length > 0) {
+                    if (data && data.tracks && data.tracks.items.length > 0) {
                         trackUris.push(data.tracks.items[0].uri);
                     }
                 }
