@@ -370,13 +370,16 @@
                     throw new Error("Could not generate a song list from the prompt.");
                 }
                 const trackUris = await searchSpotifyForTracks(songList);
-                if (!trackUris || trackUris.length === 0) {
-                    throw new Error("Could not find any tracks on Spotify for the generated list.");
-                }
                 
                 const user = await getSpotifyUserProfile();
                 const playlist = await createSpotifyPlaylist(user.id, prompt);
-                await addTracksToSpotifyPlaylist(playlist.id, trackUris);
+                
+                // *** FIX: Only add tracks if we found any ***
+                if (trackUris && trackUris.length > 0) {
+                    await addTracksToSpotifyPlaylist(playlist.id, trackUris);
+                } else {
+                    console.log("No tracks found on Spotify for the given prompt, creating an empty playlist.");
+                }
                 
                 playlistHistory.push({ prompt: prompt, playlistId: playlist.id });
                 saveHistory();
@@ -468,6 +471,7 @@
         }
 
         async function addTracksToSpotifyPlaylist(playlistId, trackUris) {
+            // *** This is now guarded by the check in generatePlaylist() ***
             const options = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
