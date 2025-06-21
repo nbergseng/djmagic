@@ -33,6 +33,11 @@
         .glowing-btn:hover {
             box-shadow: 0 0 10px #f0f, 0 0 20px #f0f, 0 0 30px #f0f;
         }
+        .glowing-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
         .glowing-border {
              border: 1px solid #f0f;
              box-shadow: 0 0 10px #f0f;
@@ -96,18 +101,14 @@
                             <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32 mx-auto"></div>
                             <p class="mt-4 text-lg">Conjuring your mix...</p>
                         </div>
-                        
-                        <div id="preview-section" class="hidden">
-                            <h2 class="text-3xl font-bold mb-4 text-center">Your Spell's Ingredients</h2>
-                            <div id="preview-list" class="space-y-2 mb-4"></div>
-                             <button id="save-playlist-button" class="mt-4 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Save & Create Playlist</button>
-                             <button id="new-magik-button-preview" class="mt-2 w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Cast a New Spell</button>
-                        </div>
 
                         <div id="playlist-section" class="hidden">
-                            <h2 class="text-3xl font-bold mb-4 text-center">Your Spell was Cast!</h2>
+                            <h2 id="playlist-title" class="text-3xl font-bold mb-4 text-center"></h2>
                             <div id="spotify-embed" class="mb-4 rounded-lg overflow-hidden"></div>
-                             <button id="new-magik-button-embed" class="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Cast a New Spell</button>
+                            <div id="action-buttons">
+                                <button id="finalize-button" class="mt-4 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Finalize & Save Spell</button>
+                                <button id="new-magik-button" class="mt-2 w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full glowing-btn">Cast a New Spell</button>
+                            </div>
                         </div>
                     </div>
                     <div id="history-sidebar" class="md:col-span-1 bg-gray-800/50 backdrop-blur-sm p-4 rounded-lg shadow-lg glowing-border h-96 overflow-y-auto">
@@ -125,8 +126,7 @@
         const clientId = "5c618d0486b747529dba6975f667ac87"; // Your Spotify Client ID
         let geminiApiKey = ""; // This will be provided by the user
         let playlistHistory = [];
-        let currentTracks = []; // To hold tracks for the current preview
-        let currentPrompt = "";
+        let currentTempPlaylist = null; // To hold data for the temporary playlist
 
         const redirectUri = window.location.origin + window.location.pathname;
 
@@ -135,9 +135,8 @@
         const saveKeyButton = document.getElementById('save-key-button');
         const apiKeyInput = document.getElementById('api-key-input');
         const generateButton = document.getElementById('generate-button');
-        const savePlaylistButton = document.getElementById('save-playlist-button');
-        const newMagikButtonPreview = document.getElementById('new-magik-button-preview');
-        const newMagikButtonEmbed = document.getElementById('new-magik-button-embed');
+        const finalizeButton = document.getElementById('finalize-button');
+        const newMagikButton = document.getElementById('new-magik-button');
         
         const promptContainer = document.getElementById('prompt-container');
         const loginSection = document.getElementById('login-section');
@@ -145,11 +144,10 @@
         const keySection = document.getElementById('key-section');
         const generatorSection = document.getElementById('generator-section');
         const loadingDiv = document.getElementById('loading');
-        const previewSection = document.getElementById('preview-section');
-        const previewList = document.getElementById('preview-list');
         const playlistSection = document.getElementById('playlist-section');
         const spotifyEmbedDiv = document.getElementById('spotify-embed');
         const historyList = document.getElementById('history-list');
+        const playlistTitle = document.getElementById('playlist-title');
 
         window.onload = () => {
             handleRedirect();
@@ -193,47 +191,35 @@
                 alert("Please enter your Gemini API key first.");
                 return;
             }
-            currentPrompt = prompt;
-            await generatePreview(prompt);
+            await generateAndEmbedTemporaryPlaylist(prompt);
         });
         
-        const resetToPrompt = () => {
-            playlistSection.classList.add('hidden');
-            previewSection.classList.add('hidden');
-            promptContainer.classList.remove('hidden');
-            document.getElementById('prompt').value = '';
-            currentTracks = [];
-            currentPrompt = "";
-        };
-
-        newMagikButtonPreview.addEventListener('click', resetToPrompt);
-        newMagikButtonEmbed.addEventListener('click', resetToPrompt);
-        
-        savePlaylistButton.addEventListener('click', async () => {
-             if (currentTracks.length === 0) {
-                alert("No tracks to save!");
+        finalizeButton.addEventListener('click', async () => {
+            if (!currentTempPlaylist) {
+                alert("No active preview to save.");
                 return;
             }
-            loadingDiv.classList.remove('hidden');
-            previewSection.classList.add('hidden');
             try {
-                const user = await getSpotifyUserProfile();
-                const playlist = await createSpotifyPlaylist(user.id, currentPrompt);
-                await addTracksToSpotifyPlaylist(playlist.id, currentTracks.map(t => t.uri));
-                
-                playlistHistory.push({ prompt: currentPrompt, playlistId: playlist.id });
+                await finalizePlaylist(currentTempPlaylist.id, currentTempPlaylist.prompt);
+                playlistHistory.push({ prompt: currentTempPlaylist.prompt, playlistId: currentTempPlaylist.id });
                 saveHistory();
                 renderHistory();
-                
-                embedSpotifyPlaylist(playlist.id);
-            } catch (error) {
-                console.error("Error saving playlist:", error);
-                alert(`Failed to save playlist: ${error.message}`);
-            } finally {
-                loadingDiv.classList.add('hidden');
+                playlistTitle.textContent = "Your Spell was Cast!";
+                finalizeButton.textContent = "Spell Saved!";
+                finalizeButton.disabled = true;
+            } catch(error) {
+                console.error("Error finalizing playlist:", error);
+                alert(`Failed to finalize playlist: ${error.message}`);
             }
         });
 
+        newMagikButton.addEventListener('click', () => {
+            playlistSection.classList.add('hidden');
+            promptContainer.classList.remove('hidden');
+            document.getElementById('prompt').value = '';
+            currentTempPlaylist = null;
+        });
+        
         function loadHistory() {
             const savedHistory = sessionStorage.getItem('djMagikHistory');
             if (savedHistory) {
@@ -257,9 +243,11 @@
                 li.querySelector('a').addEventListener('click', (e) => {
                     e.preventDefault();
                     promptContainer.classList.add('hidden');
-                    previewSection.classList.add('hidden');
                     loadingDiv.classList.add('hidden');
-                    embedSpotifyPlaylist(item.playlistId);
+                    embedSpotifyPlaylist(item.playlistId, "Your Spell was Cast!");
+                    finalizeButton.textContent = "Spell Saved!";
+                    finalizeButton.disabled = true;
+
                 });
                 historyList.appendChild(li);
             });
@@ -293,7 +281,7 @@
             params.append("client_id", clientId);
             params.append("response_type", "code");
             params.append("redirect_uri", redirectUri);
-            params.append("scope", "playlist-modify-public");
+            params.append("scope", "playlist-modify-public playlist-modify-private");
             params.append("code_challenge_method", "S256");
             params.append("code_challenge", challenge);
 
@@ -405,49 +393,38 @@
             return response.json();
         }
 
-        async function generatePreview(prompt) {
+        async function generateAndEmbedTemporaryPlaylist(prompt) {
             promptContainer.classList.add('hidden');
             loadingDiv.classList.remove('hidden');
             playlistSection.classList.add('hidden');
-            previewSection.classList.add('hidden');
 
             try {
                 const songList = await getSongListFromLLM(prompt);
-                if (!songList || songList.length === 0) {
-                    throw new Error("Could not generate a song list from the prompt.");
-                }
-                const tracks = await getTrackDataFromSpotify(songList);
-                currentTracks = tracks; // Store for saving later
-                renderTrackPreview(tracks);
+                const trackUris = await getTrackUrisFromSpotify(songList);
                 
+                const user = await getSpotifyUserProfile();
+                const playlist = await createSpotifyPlaylist(user.id, "DJ MAGIK Preview", false); // Create a private playlist
+                
+                if (trackUris.length > 0) {
+                    await addTracksToSpotifyPlaylist(playlist.id, trackUris);
+                } else {
+                    console.log("No tracks found, creating an empty preview playlist.");
+                }
+
+                currentTempPlaylist = { id: playlist.id, prompt: prompt };
+                
+                embedSpotifyPlaylist(playlist.id, "Preview Your Spell");
+                finalizeButton.textContent = "Finalize & Save Spell";
+                finalizeButton.disabled = false;
+
+
             } catch (error) {
-                console.error("Error generating preview:", error);
-                alert(`Failed to generate preview: ${error.message}`);
+                console.error("Error generating playlist:", error);
+                alert(`Failed to generate playlist: ${error.message}`);
                 promptContainer.classList.remove('hidden');
             } finally {
                 loadingDiv.classList.add('hidden');
             }
-        }
-
-        function renderTrackPreview(tracks) {
-            previewList.innerHTML = '';
-            if (tracks.length === 0) {
-                previewList.innerHTML = `<div class="text-center text-gray-400 p-4">No tracks found for that spell. Try another!</div>`;
-            } else {
-                tracks.forEach(track => {
-                    const trackElement = document.createElement('div');
-                    trackElement.className = 'flex items-center bg-gray-900/50 p-2 rounded-md';
-                    trackElement.innerHTML = `
-                        <img src="${track.album.images[2]?.url || 'https://placehold.co/64x64/2d0f41/f0f?text=?'}" class="w-12 h-12 mr-4 rounded" alt="Album art for ${track.name}">
-                        <div>
-                            <div class="font-bold text-white">${track.name}</div>
-                            <div class="text-sm text-gray-400">${track.artists.map(a => a.name).join(', ')}</div>
-                        </div>
-                    `;
-                    previewList.appendChild(trackElement);
-                });
-            }
-            previewSection.classList.remove('hidden');
         }
 
         async function getSongListFromLLM(prompt) {
@@ -493,39 +470,52 @@
             }
         }
         
-        async function getTrackDataFromSpotify(songList) {
-            const tracks = [];
+        async function getTrackUrisFromSpotify(songList) {
+            const uris = [];
             for (const song of songList) {
                 if(song.song && song.artist) {
                     const query = `track:${song.song} artist:${song.artist}`;
                     const data = await spotifyApiFetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=1`);
                     if (data && data.tracks && data.tracks.items.length > 0) {
-                        tracks.push(data.tracks.items[0]);
+                        uris.push(data.tracks.items[0].uri);
                     }
                 }
             }
-            return tracks;
+            return uris;
         }
 
         async function getSpotifyUserProfile() {
             return await spotifyApiFetch('https://api.spotify.com/v1/me');
         }
 
-        async function createSpotifyPlaylist(userId, name) {
+        async function createSpotifyPlaylist(userId, name, isPublic = true) {
             const options = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: `DJ MAGIK's Spell: ${name}`,
-                    public: true,
-                    description: `Conjured by DJ MAGIK with the incantation: "${name}"`
+                    name: name,
+                    public: isPublic,
+                    description: isPublic ? `Conjured by DJ MAGIK with the incantation: "${name}"` : "A temporary spell from DJ MAGIK..."
                 })
             };
             return await spotifyApiFetch(`https://api.spotify.com/v1/users/${userId}/playlists`, options);
         }
+        
+        async function finalizePlaylist(playlistId, prompt) {
+             const options = {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `DJ MAGIK's Spell: ${prompt}`,
+                    public: true,
+                    description: `Conjured by DJ MAGIK with the incantation: "${prompt}"`
+                })
+            };
+            await spotifyApiFetch(`https://api.spotify.com/v1/playlists/${playlistId}`, options);
+        }
 
         async function addTracksToSpotifyPlaylist(playlistId, trackUris) {
-            if (trackUris.length === 0) return; // Don't send request for empty tracks
+            if (trackUris.length === 0) return;
             const options = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -534,13 +524,13 @@
             await spotifyApiFetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, options);
         }
         
-        function embedSpotifyPlaylist(playlistId) {
+        function embedSpotifyPlaylist(playlistId, title) {
+            playlistTitle.textContent = title;
             spotifyEmbedDiv.innerHTML = `
                 <iframe src="https://open.spotify.com/embed/playlist/${playlistId}" 
                         width="100%" height="532" frameBorder="0" 
                         allowtransparency="true" allow="encrypted-media">
                 </iframe>`;
-            previewSection.classList.add('hidden');
             playlistSection.classList.remove('hidden');
         }
     </script>
