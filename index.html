@@ -149,6 +149,8 @@
         const historyList = document.getElementById('history-list');
         const playlistTitle = document.getElementById('playlist-title');
 
+        const PREVIEW_PLAYLIST_NAME = "DJ MAGIK Preview";
+
         window.onload = () => {
             handleRedirect();
             checkForKey();
@@ -200,8 +202,8 @@
                 return;
             }
             try {
-                await finalizePlaylist(currentTempPlaylist.id, currentTempPlaylist.prompt);
-                playlistHistory.push({ prompt: currentTempPlaylist.prompt, playlistId: currentTempPlaylist.id });
+                await finalizePlaylist(currentTempPlaylist.id, currentTempPlaylist.prompt, currentTempPlaylist.spellName);
+                playlistHistory.push({ prompt: currentTempPlaylist.prompt, playlistId: currentTempPlaylist.id, spellName: currentTempPlaylist.spellName });
                 saveHistory();
                 renderHistory();
                 playlistTitle.textContent = "Your Spell was Cast!";
@@ -244,7 +246,7 @@
                     e.preventDefault();
                     promptContainer.classList.add('hidden');
                     loadingDiv.classList.add('hidden');
-                    embedSpotifyPlaylist(item.playlistId, "Your Spell was Cast!");
+                    embedSpotifyPlaylist(item.playlistId, `DJ MAGIK CASTS: ${item.spellName || item.prompt}`);
                     finalizeButton.textContent = "Spell Saved!";
                     finalizeButton.disabled = true;
 
@@ -399,24 +401,25 @@
             playlistSection.classList.add('hidden');
 
             try {
-                const songList = await getSongListFromLLM(prompt);
+                 const [songList, spellName] = await Promise.all([
+                    getSongListFromLLM(prompt),
+                    getSpellifiedSummary(prompt)
+                ]);
+
                 const trackUris = await getTrackUrisFromSpotify(songList);
                 
                 const user = await getSpotifyUserProfile();
-                const playlist = await createSpotifyPlaylist(user.id, "DJ MAGIK Preview", false); // Create a private playlist
+                const playlist = await createSpotifyPlaylist(user.id, PREVIEW_PLAYLIST_NAME, false); 
                 
                 if (trackUris.length > 0) {
                     await addTracksToSpotifyPlaylist(playlist.id, trackUris);
-                } else {
-                    console.log("No tracks found, creating an empty preview playlist.");
                 }
 
-                currentTempPlaylist = { id: playlist.id, prompt: prompt };
+                currentTempPlaylist = { id: playlist.id, prompt: prompt, spellName: spellName };
                 
-                embedSpotifyPlaylist(playlist.id, PREVIEW_TITLE);
+                embedSpotifyPlaylist(playlist.id, PREVIEW_PLAYLIST_NAME);
                 finalizeButton.textContent = "Finalize & Save Spell";
                 finalizeButton.disabled = false;
-
 
             } catch (error) {
                 console.error("Error generating playlist:", error);
@@ -426,9 +429,35 @@
                 loadingDiv.classList.add('hidden');
             }
         }
+        
+        async function getSpellifiedSummary(prompt) {
+            console.log(`Getting spellified summary for: ${prompt}`);
+            const apiPrompt = `Summarize the following musical theme into a 1-2 word, magical-sounding "spell name". For example, if the theme is "covers by other artists of charlie parker songs", a good summary would be "Bird's Echo". If the theme is "80s synth-pop for a rainy day", a good summary would be "Neon Rain". Just return the spell name itself, with no extra text or quotes. Theme: "${prompt}"`;
+            let chatHistory = [{ role: "user", parts: [{ text: apiPrompt }] }];
+            const payload = { contents: chatHistory };
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+                const result = await response.json();
+                if (result.candidates && result.candidates[0].content.parts[0].text) {
+                    return result.candidates[0].content.parts[0].text.trim().replace(/"/g, ''); // Clean quotes
+                }
+            } catch (error) {
+                console.error("Could not get spellified summary, falling back to original prompt.", error);
+                return prompt; // Fallback
+            }
+             return prompt; // Fallback
+        }
+
 
         async function getSongListFromLLM(prompt) {
-            console.log(`Sending prompt to LLM: ${prompt}`);
+            console.log(`Sending prompt to LLM for song list: ${prompt}`);
             let chatHistory = [];
             chatHistory.push({ role: "user", parts: [{ text: `Generate a list of 15 songs for a playlist with the theme: "${prompt}". Please provide the response as a JSON array of objects, where each object has a "song" and "artist" property. For example: [{"song": "Song Title", "artist": "Artist Name"}].` }] });
             const payload = { 
@@ -453,8 +482,7 @@
             
             const result = await response.json();
             
-            if (result.candidates && result.candidates.length > 0 &&
-              result.candidates[0].content && result.candidates[0].content.parts &&
+            if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts &&
               result.candidates[0].content.parts.length > 0) {
                 const text = result.candidates[0].content.parts[0].text;
                 try {
@@ -501,12 +529,12 @@
             return await spotifyApiFetch(`https://api.spotify.com/v1/users/${userId}/playlists`, options);
         }
         
-        async function finalizePlaylist(playlistId, prompt) {
+        async function finalizePlaylist(playlistId, prompt, spellName) {
              const options = {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: `DJ MAGIK's Spell: ${prompt}`,
+                    name: `DJ MAGIK CASTS: ${spellName}`,
                     public: true,
                     description: `Conjured by DJ MAGIK with the incantation: "${prompt}"`
                 })
